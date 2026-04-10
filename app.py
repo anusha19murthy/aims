@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -12,7 +13,15 @@ from ml.imaging.extractor import extract_imaging
 load_dotenv()
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-app = FastAPI(title="AIMS - AI Medical Scribe")
+app = FastAPI(title="CogniScribe - AI Medical Scribe")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── Request models ────────────────────────────────────────────────────────────
