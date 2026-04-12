@@ -18,7 +18,8 @@ STRICT RULES:
 - If diagnosis is not explicitly stated but can be clearly inferred from the history, examination, and medications, include it with confidence marked as "medium".
 - Never infer diagnoses beyond what is directly supported by stated findings. Do not add conditions like heart failure, neuropathy, or nephropathy unless the doctor explicitly said them.
 - For paediatric patients, always include the formulation as part of the medication name — Syrup, Drops, Suspension, Tablet. Example: "Syrup Paracetamol 5ml" not just "Paracetamol 5ml".
-- For medications, include all drugs explicitly named including Indian brand names. Common Indian brands: Dolo/Crocin = Paracetamol, Pan/Pantop = Pantoprazole, Augmentin = Amoxicillin-Clavulanate, Combiflam = Ibuprofen+Paracetamol, Meftal Spas = Dicyclomine+Mefenamic acid, Cheston = Chlorpheniramine+Dextromethorphan.
+- For medications, include all drugs explicitly named including Indian brand names. Common Indian brands: Dolo/Crocin = Paracetamol, Pan/Pantop/Pantocid = Pantoprazole, Augmentin = Amoxicillin-Clavulanate, Combiflam = Ibuprofen+Paracetamol, Meftal Spas = Dicyclomine+Mefenamic acid, Cheston Cold = Chlorpheniramine+Dextromethorphan+Phenylephrine, Gluconorm/Glycomet = Metformin, Amaryl/Glimer = Glimepiride, Lyrica/Pregeb = Pregabalin, Telma/Telmikind = Telmisartan, Amlip/Amlong = Amlodipine, Azee/Zithromax = Azithromycin, Clavam = Amoxicillin-Clavulanate, Rantac = Ranitidine, Ondem/Emeset = Ondansetron, Domstal = Domperidone, Volini = Diclofenac gel, Monocef = Ceftriaxone, Taxim = Cefotaxime.
+- If a drug name sounds phonetically similar to a known drug, use the correct drug name. Example: Citruzine = Cetirizine, Prevagabalin = Pregabalin, Glymepride = Glimepiride, Sartan = Telmisartan.
 - Always capture meningeal signs examination findings if mentioned — neck stiffness, Kernig sign, Brudzinski sign.
 - Return ONLY a valid JSON object. No explanation, no markdown, no extra text.
 

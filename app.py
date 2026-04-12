@@ -58,7 +58,7 @@ async def transcribe(file: UploadFile = File(...)):
             model="whisper-1",
             file=(file.filename, audio_bytes, file.content_type),
             language="en",
-            prompt="Medical consultation dictation. Doctor may speak in English, Hindi, Marathi, Kannada, Tamil or a mix. Medical terms, drug names, diagnoses and dosages are in English."
+            prompt="Medical consultation dictation in India. Doctor may speak English, Hindi, Odia, Marathi, Kannada, Tamil or a regional language mix. Common Indian drug names: Paracetamol, Dolo, Crocin, Cetirizine, Cheston Cold, Metformin, Glimepiride, Pregabalin, Telmisartan, Amlodipine, Azithromycin, Pantoprazole, Pan, Clopidogrel, Aspirin, Atorvastatin, Escitalopram, Prednisolone, Augmentin, Combiflam, Meftal, Ondansetron, Ramipril, Metoprolol, Furosemide, Warfarin, Alteplase, Tiotropium, Salbutamol, Montelukast, Losartan, Clonazepam, Alprazolam, Amoxicillin, Ciprofloxacin, Cefazolin, Meropenem, Piperacillin, Vancomycin, Insulin, Levothyroxine, Atorvastatin, Rosuvastatin. Medical terms: hypertension, diabetes, tachycardia, bradycardia, dyspnoea, haemoptysis, haematemesis, syncope, palpitations, myocardial infarction, appendicitis, cholecystitis, pneumonia, COPD, asthma, stroke, seizure, sepsis, anaemia."
         )
 
         return {
