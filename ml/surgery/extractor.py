@@ -14,6 +14,7 @@ Extract structured information from the transcript.
 STRICT RULES:
 - Extract ONLY what the surgeon actually said. Never invent details.
 - If a field was not mentioned, return null.
+- assistant_surgeon: assistant surgeon name if mentioned
 - ALWAYS output in English only. Translate any Hindi or regional language words.
 - Return ONLY a valid JSON object. No explanation, no markdown.
 
@@ -27,6 +28,7 @@ Output:
   "gender": "male",
   "procedure_name": "emergency exploratory laparotomy",
   "surgeon_name": "Dr. Mehta",
+  "assisted_surgeon": "Dr. Kumar",
   "anaesthesia": "general anaesthesia",
   "findings": "0.5 cm perforation anterior wall duodenum, minimal peritoneal soiling, no free blood",
   "procedure_details": "Graham patch repair, peritoneal lavage with 3 litres normal saline, drain placed in right paracolic gutter",

@@ -7,6 +7,7 @@ class SurgeryNote(BaseModel):
     gender: Optional[str] = None
     procedure_name: Optional[str] = None
     surgeon_name: Optional[str] = None
+    assistant_surgeon: str | None = None
     anaesthesia: Optional[str] = None
     findings: Optional[str] = None
     procedure_details: Optional[str] = None
