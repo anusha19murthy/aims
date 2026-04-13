@@ -1,17 +1,26 @@
 import os
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from datetime import timedelta
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
+
+import database
+import models
+import auth
 
 from ml.opd.extractor import extract_opd
 from ml.surgery.extractor import extract_surgery
 from ml.progress.extractor import extract_progress
 from ml.imaging.extractor import extract_imaging
-
+print("APP STARTING...")
 load_dotenv()
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(title="CogniScribe - AI Medical Scribe")
 
@@ -38,6 +47,66 @@ class CorrectionRequest(BaseModel):
     original_value: str | None
     corrected_value: str
     doctor_id: str | None = None
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    full_name: str
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    full_name: str
+
+class PatientCreate(BaseModel):
+    name: str
+    age: int | None = None
+    gender: str | None = None
+    contact: str | None = None
+
+# ── Authentication ────────────────────────────────────────────────────────────
+
+@app.post("/register", response_model=UserResponse)
+def register_user(user: UserCreate, db: Session = Depends(database.get_db)):
+    db_user = db.query(models.User).filter(models.User.email == user.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    hashed_password = auth.get_password_hash(user.password)
+    new_user = models.User(email=user.email, hashed_password=hashed_password, full_name=user.full_name)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
+    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.id}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "full_name": user.full_name}}
+
+@app.get("/users/me", response_model=UserResponse)
+def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
+    return current_user
+
+# ── Patients ──────────────────────────────────────────────────────────────────
+
+@app.post("/patients")
+def create_patient(patient: PatientCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    new_patient = models.Patient(**patient.dict(), doctor_id=current_user.id)
+    db.add(new_patient)
+    db.commit()
+    db.refresh(new_patient)
+    return new_patient
+
+@app.get("/patients")
+def read_patients(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    patients = db.query(models.Patient).filter(models.Patient.doctor_id == current_user.id).all()
+    return patients
 
 
 # ── Transcription ─────────────────────────────────────────────────────────────
@@ -101,11 +170,11 @@ def imaging(req: TranscriptRequest):
 
 # ── Correction logging ────────────────────────────────────────────────────────
 
-corrections_log = []  # TODO: replace with PostgreSQL later
-
 @app.post("/correction")
-def log_correction(req: CorrectionRequest):
-    corrections_log.append(req.dict())
+def log_correction(req: CorrectionRequest, db: Session = Depends(database.get_db)):
+    new_corr = models.Correction(**req.dict())
+    db.add(new_corr)
+    db.commit()
     return {"status": "logged"}
 
 
