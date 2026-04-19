@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Request
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -48,6 +48,9 @@ class CorrectionRequest(BaseModel):
     original_value: str | None
     corrected_value: str
     doctor_id: str | None = None
+
+class GoogleLoginRequest(BaseModel):
+    token: str
 
 class UserCreate(BaseModel):
     email: str
@@ -104,6 +107,31 @@ async def login(request: Request, db: Session = Depends(database.get_db)):
 def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
 
+@app.post("/auth/google")
+async def google_login(req: GoogleLoginRequest, db: Session = Depends(database.get_db)):
+    idinfo = auth.verify_google_token(req.token)
+    if not idinfo:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+    email = idinfo.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Google token does not contain email")
+    
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        name = idinfo.get("name", "")
+        # Give them an unusable random password since they login via google
+        random_password = auth.get_password_hash(models.gen_uuid())
+        user = models.User(email=email, hashed_password=random_password, full_name=name)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.id}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "full_name": user.full_name}}
+
 # ── Patients ──────────────────────────────────────────────────────────────────
 
 @app.post("/patients")
@@ -115,12 +143,18 @@ def create_patient(patient: PatientCreate, db: Session = Depends(database.get_db
     return new_patient
 
 @app.get("/patients")
-def read_patients(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+def read_patients(response: Response, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     patients = db.query(models.Patient).filter(models.Patient.doctor_id == current_user.id).all()
     return patients
 
 @app.get("/patients/{patient_id}/notes")
-def read_patient_notes(patient_id: str, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+def read_patient_notes(patient_id: str, response: Response, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id, models.Patient.doctor_id == current_user.id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found or unauthorized")

@@ -8,3 +8,4 @@ httpx==0.27.0
 sqlalchemy
 passlib[bcrypt]
 python-jose[cryptography]
+google-auth
