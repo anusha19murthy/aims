@@ -6,11 +6,14 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import models, database
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 # Authentication Configuration
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "af98ad7a9sd76c8c9a87d9a8d79a8d7c8a9") # Fallback for development
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -49,3 +52,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+def verify_google_token(token: str):
+    try:
+        request = google_requests.Request()
+        idinfo = id_token.verify_oauth2_token(token, request, GOOGLE_CLIENT_ID)
+        if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+            raise ValueError('Wrong issuer.')
+        return idinfo
+    except ValueError:
+        return None

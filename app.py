@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status
+import json
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -48,6 +49,9 @@ class CorrectionRequest(BaseModel):
     corrected_value: str
     doctor_id: str | None = None
 
+class GoogleLoginRequest(BaseModel):
+    token: str
+
 class UserCreate(BaseModel):
     email: str
     password: str
@@ -79,9 +83,19 @@ def register_user(user: UserCreate, db: Session = Depends(database.get_db)):
     return new_user
 
 @app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
-    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+async def login(request: Request, db: Session = Depends(database.get_db)):
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json()
+        email = body.get("email")
+        password = body.get("password")
+    else:
+        form_data = await request.form()
+        email = form_data.get("username")
+        password = form_data.get("password")
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user or not auth.verify_password(password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
     access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth.create_access_token(
@@ -92,6 +106,31 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @app.get("/users/me", response_model=UserResponse)
 def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
+
+@app.post("/auth/google")
+async def google_login(req: GoogleLoginRequest, db: Session = Depends(database.get_db)):
+    idinfo = auth.verify_google_token(req.token)
+    if not idinfo:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+    email = idinfo.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Google token does not contain email")
+    
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        name = idinfo.get("name", "")
+        # Give them an unusable random password since they login via google
+        random_password = auth.get_password_hash(models.gen_uuid())
+        user = models.User(email=email, hashed_password=random_password, full_name=name)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.id}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "user": {"id": user.id, "email": user.email, "full_name": user.full_name}}
 
 # ── Patients ──────────────────────────────────────────────────────────────────
 
@@ -104,15 +143,41 @@ def create_patient(patient: PatientCreate, db: Session = Depends(database.get_db
     return new_patient
 
 @app.get("/patients")
-def read_patients(db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+def read_patients(response: Response, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     patients = db.query(models.Patient).filter(models.Patient.doctor_id == current_user.id).all()
     return patients
+
+@app.get("/patients/{patient_id}/notes")
+def read_patient_notes(patient_id: str, response: Response, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id, models.Patient.doctor_id == current_user.id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found or unauthorized")
+    notes = db.query(models.Note).filter(models.Note.patient_id == patient_id).order_by(models.Note.created_at.desc()).all()
+    result = []
+    for n in notes:
+        try:
+            content = json.loads(n.content) if n.content else {}
+        except:
+            content = {}
+        result.append({
+            "id": n.id,
+            "note_type": n.note_type,
+            "created_at": n.created_at,
+            "content": content
+        })
+    return result
 
 
 # ── Transcription ─────────────────────────────────────────────────────────────
 
 @app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)):
+async def transcribe(file: UploadFile = File(...), current_user: models.User = Depends(auth.get_current_user)):
     """
     Step 1 of pipeline.
     UI sends audio file → returns English transcript.
@@ -145,34 +210,73 @@ async def transcribe(file: UploadFile = File(...)):
 # ── Note extraction ───────────────────────────────────────────────────────────
 
 @app.post("/extract/opd")
-def opd(req: TranscriptRequest):
-    note = extract_opd(req.transcript)
-    return note.dict()
+def opd(req: TranscriptRequest, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    note_data = extract_opd(req.transcript)
+    if req.patient_id:
+        new_note = models.Note(
+            patient_id=req.patient_id,
+            doctor_id=current_user.id,
+            note_type="opd",
+            content=json.dumps(note_data.dict())
+        )
+        db.add(new_note)
+        db.commit()
+    return note_data.dict()
 
 
 @app.post("/extract/surgery")
-def surgery(req: TranscriptRequest):
-    note = extract_surgery(req.transcript)
-    return note.dict()
+def surgery(req: TranscriptRequest, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    note_data = extract_surgery(req.transcript)
+    if req.patient_id:
+        new_note = models.Note(
+            patient_id=req.patient_id,
+            doctor_id=current_user.id,
+            note_type="surgery",
+            content=json.dumps(note_data.dict())
+        )
+        db.add(new_note)
+        db.commit()
+    return note_data.dict()
 
 
 @app.post("/extract/progress")
-def progress(req: TranscriptRequest):
-    note = extract_progress(req.transcript)
-    return note.dict()
+def progress(req: TranscriptRequest, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    note_data = extract_progress(req.transcript)
+    if req.patient_id:
+        new_note = models.Note(
+            patient_id=req.patient_id,
+            doctor_id=current_user.id,
+            note_type="progress",
+            content=json.dumps(note_data.dict())
+        )
+        db.add(new_note)
+        db.commit()
+    return note_data.dict()
 
 
 @app.post("/extract/imaging")
-def imaging(req: TranscriptRequest):
-    note = extract_imaging(req.transcript)
-    return note.dict()
+def imaging(req: TranscriptRequest, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    note_data = extract_imaging(req.transcript)
+    if req.patient_id:
+        new_note = models.Note(
+            patient_id=req.patient_id,
+            doctor_id=current_user.id,
+            note_type="imaging",
+            content=json.dumps(note_data.dict())
+        )
+        db.add(new_note)
+        db.commit()
+    return note_data.dict()
 
 
 # ── Correction logging ────────────────────────────────────────────────────────
 
 @app.post("/correction")
-def log_correction(req: CorrectionRequest, db: Session = Depends(database.get_db)):
-    new_corr = models.Correction(**req.dict())
+def log_correction(req: CorrectionRequest, db: Session = Depends(database.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    req_dict = req.dict()
+    if req_dict.get("doctor_id") is None:
+        req_dict["doctor_id"] = current_user.id
+    new_corr = models.Correction(**req_dict)
     db.add(new_corr)
     db.commit()
     return {"status": "logged"}

@@ -31,6 +31,7 @@ class Patient(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     doctor = relationship("User", back_populates="patients")
+    notes = relationship("Note", back_populates="patient", cascade="all, delete-orphan")
 
 class Correction(Base):
     __tablename__ = "corrections"
@@ -43,3 +44,16 @@ class Correction(Base):
     corrected_value = Column(Text)
     doctor_id = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id = Column(String, primary_key=True, index=True, default=gen_uuid)
+    patient_id = Column(String, ForeignKey("patients.id"))
+    doctor_id = Column(String, ForeignKey("users.id"))
+    note_type = Column(String)
+    content = Column(Text)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    patient = relationship("Patient", back_populates="notes")
+    doctor = relationship("User")
