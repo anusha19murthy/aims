@@ -1,5 +1,12 @@
-Patient Ramesh Kumar 42 year male with fever and headache for 3 days.
-Temperature 101.4 bp 120/80.
-Diagnosed viral fever.
-Paracetamol 650 mg.
-Review after 5 days.
+fastapi==0.110.0
+uvicorn==0.29.0
+pydantic==2.5.3
+openai==1.55.3
+python-dotenv==1.0.0
+python-multipart==0.0.9
+httpx==0.27.0
+sqlalchemy
+passlib[bcrypt]
+python-jose[cryptography]
+google-auth
+requests
