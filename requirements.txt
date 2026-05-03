@@ -1,0 +1,5 @@
+Patient Ramesh Kumar 42 year male with fever and headache for 3 days.
+Temperature 101.4 bp 120/80.
+Diagnosed viral fever.
+Paracetamol 650 mg.
+Review after 5 days.
