@@ -2,7 +2,6 @@ from .schema import OPDNote, PatientInfo, Vitals
 
 from ml.extractor.medical_extractor import MedicalExtractor
 from ml.vocab.medical_vocab import SYMPTOMS, DIAGNOSES
-from .schema import OPDNote, PatientInfo, Vitals
 
 extractor = MedicalExtractor()
 

@@ -1,13 +1,11 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, Response
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from pydantic import BaseModel
-from openai import OpenAI
 from dotenv import load_dotenv
 
 import os
-import json
 
 import database
 import models
@@ -27,47 +25,32 @@ load_dotenv()
 
 app = FastAPI(title="CogniScribe - AI Medical Scribe")
 
-# ✅ CORS FIX (VERY IMPORTANT)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later restrict to frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-print("🚀 APP STARTING...")
+print("APP STARTING...")
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+# OpenAI client — loaded lazily inside extractors, not needed at startup
+try:
+    from openai import OpenAI
+    _openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+except Exception:
+    _openai_client = None
 
 models.Base.metadata.create_all(bind=database.engine)
 
 # ─────────────────────────────────────────────
-# BASIC ROUTES
+# REQUEST MODELS
 # ─────────────────────────────────────────────
 
-@app.post("/opd")
-def opd(text: str):
-    return extract_opd(clean_text(text)).dict()
+class TextRequest(BaseModel):
+    text: str
 
-
-@app.post("/surgery")
-def surgery(text: str):
-    return extract_surgery(clean_text(text)).dict()
-
-
-@app.post("/progress")
-def progress(text: str):
-    return extract_progress(clean_text(text)).dict()
-
-
-@app.post("/imaging")
-def imaging(text: str):
-    return extract_imaging(clean_text(text)).dict()
-
-# ─────────────────────────────────────────────
-# MODELS
-# ─────────────────────────────────────────────
 
 class TranscriptRequest(BaseModel):
     transcript: str
@@ -104,6 +87,53 @@ class PatientCreate(BaseModel):
     age: int | None = None
     gender: str | None = None
     contact: str | None = None
+
+# ─────────────────────────────────────────────
+# HEALTH
+# ─────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+# ─────────────────────────────────────────────
+# EXTRACTOR ROUTES
+# ─────────────────────────────────────────────
+
+@app.post("/opd")
+def opd(req: TextRequest):
+    try:
+        result = extract_opd(clean_text(req.text))
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/surgery")
+def surgery(req: TextRequest):
+    try:
+        result = extract_surgery(clean_text(req.text))
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/progress")
+def progress(req: TextRequest):
+    try:
+        result = extract_progress(clean_text(req.text))
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/imaging")
+def imaging(req: TextRequest):
+    try:
+        result = extract_imaging(clean_text(req.text))
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ─────────────────────────────────────────────
 # AUTH
@@ -206,15 +236,17 @@ async def google_login(req: GoogleLoginRequest, db: Session = Depends(database.g
     }
 
 # ─────────────────────────────────────────────
-# TRANSCRIBE (CRITICAL)
+# TRANSCRIBE
 # ─────────────────────────────────────────────
 
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...)):
+    if not _openai_client:
+        raise HTTPException(status_code=503, detail="OpenAI not configured")
     try:
         audio_bytes = await file.read()
 
-        transcript = client.audio.transcriptions.create(
+        transcript = _openai_client.audio.transcriptions.create(
             model="whisper-1",
             file=(file.filename, audio_bytes, file.content_type),
             language="en"
@@ -224,11 +256,3 @@ async def transcribe(file: UploadFile = File(...)):
 
     except Exception as e:
         return {"transcript": None, "error": str(e)}
-
-# ─────────────────────────────────────────────
-# HEALTH CHECK
-# ─────────────────────────────────────────────
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}

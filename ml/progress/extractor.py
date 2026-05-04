@@ -1,43 +1,3 @@
-<<<<<<< HEAD
-# ml/progress/extractor.py
-import re
-from .schema import ProgressNote
-from ml.extractor.medical_extractor import MedicalExtractor
-from ml.processor import split_sections
-
-extractor = MedicalExtractor()
-
-DELTA_PATTERN = re.compile(
-    r'\b(improving|improved|worsening|worsened|stable|'
-    r'deteriorating|comfortable|restless|afebrile|febrile|'
-    r'ambulant|ambulating|tolerating)\b',
-    re.IGNORECASE
-)
-
-DAY_PATTERN = re.compile(
-    r'(?:day|pod|post.?op\s*day)\s*(\d+)', re.IGNORECASE)
-
-def extract_progress(text: str) -> ProgressNote:
-    sections = split_sections(text)
-    vitals = extractor.extract_vitals(text)
-    medications = extractor.extract_medications(text)
-    
-    # Clinical status — look for delta language
-    status_matches = DELTA_PATTERN.findall(text)
-    clinical_status = ", ".join(set(status_matches)) if status_matches else None
-    
-    # Post-op day
-    day_match = DAY_PATTERN.search(text)
-    post_op_day = f"Day {day_match.group(1)}" if day_match else None
-    
-    return ProgressNote(
-        post_op_day=post_op_day,
-        clinical_status=clinical_status,
-        vitals=vitals,
-        assessment=sections.get("diagnosis"),
-        plan=sections.get("plan"),
-        medications=medications
-=======
 import os
 import json
 from dotenv import load_dotenv
@@ -45,7 +5,11 @@ from openai import OpenAI
 from .schema import ProgressNote
 
 load_dotenv()
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+try:
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+except Exception:
+    client = None
 
 SYSTEM_PROMPT = """You are a clinical documentation assistant.
 A doctor is doing ward rounds and dictating a progress note for a hospital patient.
@@ -57,11 +21,23 @@ STRICT RULES:
 - ALWAYS output in English only. Translate any Hindi or regional language words.
 - If diagnosis is not stated but inferable, include it with confidence "medium".
 - For ICU patients, capture ventilator settings separately.
-- Always capture urine output if mentioned — include it in vitals field alongside BP and pulse.
-- Capture all lab values and investigation results in investigation_results field including culture reports, sensitivity pending status, and trend values like "creatinine risen from 1.8 to 3.2".
+- Always capture urine output if mentioned in the vitals field.
 - Return ONLY a valid JSON object. No explanation, no markdown.
 
-FEW-SHOT EXAMPLE 1 (post-op ward patient):
+FIELDS TO EXTRACT:
+- patient_name
+- day: post-op day or ICU day if mentioned
+- clinical_status: overall status (stable, critical, improving, etc.)
+- vitals: BP, pulse, temperature, SpO2, urine output as a single string
+- ventilator_settings: FiO2, PEEP, tidal volume if on ventilator
+- investigation_results: labs, cultures, trends
+- examination_findings: what was found on examination
+- assessment: diagnosis or clinical assessment
+- plan: management plan
+- follow_up: review date if mentioned
+- confidence: {"clinical_status": "high/medium", "plan": "high/medium"}
+
+FEW-SHOT EXAMPLE:
 Transcript: "Kavitha day 5 post LSCS. Afebrile. BP 124 over 82, pulse 80, SpO2 99. Uterus well contracted, lochia normal, wound healthy. Haemoglobin today 9.8, starting oral iron. Plan discharge tomorrow. Tab Ferrous Sulphate twice daily, Tab Calcium for 6 weeks."
 
 Output:
@@ -74,32 +50,17 @@ Output:
   "investigation_results": "haemoglobin 9.8 g/dL",
   "examination_findings": "uterus well contracted, lochia normal, wound healthy",
   "assessment": "recovering well post LSCS, mild anaemia",
-  "plan": "start oral iron, discharge tomorrow, suture removal after 7 days",
+  "plan": "start oral iron, discharge tomorrow",
   "follow_up": "7 days for suture removal",
-  "confidence": {"clinical_status": "high", "vitals": "high", "plan": "high"}
-}
-
-FEW-SHOT EXAMPLE 2 (ICU patient):
-Transcript: "Mohan Lal day 3 ICU ARDS secondary to pneumonia. Ventilated FiO2 60%, PEEP 8, tidal volume 400. Temp 38.4, BP 92 over 60 on Noradrenaline 0.1 mcg per kg per min, pulse 110. Procalcitonin 18. Plan increase PEEP to 10, prone positioning, add Polymyxin B, family counselled prognosis poor."
-
-Output:
-{
-  "patient_name": "Mohan Lal",
-  "day": "day 3 ICU",
-  "clinical_status": "critical, ventilated, on vasopressor support",
-  "vitals": "temp 38.4, BP 92/60, pulse 110, on Noradrenaline 0.1 mcg/kg/min",
-  "ventilator_settings": "FiO2 60%, PEEP 8, tidal volume 400ml",
-  "investigation_results": "procalcitonin 18",
-  "examination_findings": null,
-  "assessment": "ARDS secondary to severe pneumonia, day 3 ICU, worsening",
-  "plan": "increase PEEP to 10, prone positioning, add Polymyxin B for MDR coverage, monitor renal function",
-  "follow_up": null,
   "confidence": {"clinical_status": "high", "vitals": "high", "plan": "high"}
 }
 """
 
 
 def extract_progress(text: str) -> ProgressNote:
+    if not client:
+        return ProgressNote(extraction_error="OpenAI client not configured")
+
     prompt = f"{SYSTEM_PROMPT}\n\nNow extract from this transcript:\n\"{text}\"\n\nOutput:"
 
     try:
@@ -133,5 +94,4 @@ def extract_progress(text: str) -> ProgressNote:
         follow_up=data.get("follow_up"),
         confidence=data.get("confidence") or {},
         extraction_error=None,
->>>>>>> d2423e93a7b40526def12edd5c1c05e41cfde856
     )
