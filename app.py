@@ -94,6 +94,31 @@ class PatientCreate(BaseModel):
     gender: str | None = None
     contact: str | None = None
 
+class NoteCreate(BaseModel):
+    note_type: str
+    content: str  # JSON-encoded string of the note's fields
+
+
+class PatientResponse(BaseModel):
+    id: str
+    name: str
+    age: int | None = None
+    gender: str | None = None
+    contact: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class NoteResponse(BaseModel):
+    id: str
+    patient_id: str
+    note_type: str
+    content: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 # ─────────────────────────────────────────────
 # HEALTH
 # ─────────────────────────────────────────────
@@ -199,6 +224,103 @@ async def login(request: Request, db: Session = Depends(database.get_db)):
         }
     }
 
+# ─────────────────────────────────────────────
+# PATIENTS (scoped to logged-in doctor)
+# ─────────────────────────────────────────────
+
+@app.get("/patients", response_model=list[PatientResponse])
+def get_patients(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    return db.query(models.Patient).filter(
+        models.Patient.doctor_id == current_user.id
+    ).all()
+
+
+@app.post("/patients", response_model=PatientResponse)
+def create_patient(
+    patient: PatientCreate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    new_patient = models.Patient(
+        name=patient.name,
+        age=patient.age,
+        gender=patient.gender,
+        contact=patient.contact,
+        doctor_id=current_user.id
+    )
+    db.add(new_patient)
+    db.commit()
+    db.refresh(new_patient)
+    return new_patient
+
+
+@app.delete("/patients/{patient_id}")
+def delete_patient(
+    patient_id: str,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    patient = db.query(models.Patient).filter(
+        models.Patient.id == patient_id,
+        models.Patient.doctor_id == current_user.id
+    ).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    db.delete(patient)
+    db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# NOTES (scoped to logged-in doctor, per patient)
+# ─────────────────────────────────────────────
+
+@app.get("/patients/{patient_id}/notes", response_model=list[NoteResponse])
+def get_patient_notes(
+    patient_id: str,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    patient = db.query(models.Patient).filter(
+        models.Patient.id == patient_id,
+        models.Patient.doctor_id == current_user.id
+    ).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    return db.query(models.Note).filter(
+        models.Note.patient_id == patient_id,
+        models.Note.doctor_id == current_user.id
+    ).order_by(models.Note.created_at.desc()).all()
+
+
+@app.post("/patients/{patient_id}/notes", response_model=NoteResponse)
+def create_patient_note(
+    patient_id: str,
+    note: NoteCreate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    patient = db.query(models.Patient).filter(
+        models.Patient.id == patient_id,
+        models.Patient.doctor_id == current_user.id
+    ).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    new_note = models.Note(
+        patient_id=patient_id,
+        doctor_id=current_user.id,
+        note_type=note.note_type,
+        content=note.content
+    )
+    db.add(new_note)
+    db.commit()
+    db.refresh(new_note)
+    return new_note
 
 @app.get("/users/me", response_model=UserResponse)
 def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
