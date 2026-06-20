@@ -30,6 +30,7 @@ app.add_middleware(
     allow_origins=[
         "https://cogniscribe.in",
         "https://www.cogniscribe.in",
+        "https://app.cogniscribe.in",
         "https://cogniscribe-web.vercel.app",
         "http://localhost:3000",
     ],
