@@ -119,9 +119,48 @@ class NoteResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        
+# ─────────────────────────────────────────────
+# PATIENT EDIT DETAILS
+# ─────────────────────────────────────────────
+
+class PatientUpdate(BaseModel):
+    name: str | None = None
+    age: int | None = None
+    gender: str | None = None
+    contact: str | None = None
+
+
+@app.patch("/patients/{patient_id}", response_model=PatientResponse)
+def update_patient(
+    patient_id: str,
+    update: PatientUpdate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    patient = db.query(models.Patient).filter(
+        models.Patient.id == patient_id,
+        models.Patient.doctor_id == current_user.id
+    ).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if update.name is not None:
+        patient.name = update.name
+    if update.age is not None:
+        patient.age = update.age
+    if update.gender is not None:
+        patient.gender = update.gender
+    if update.contact is not None:
+        patient.contact = update.contact
+
+    db.commit()
+    db.refresh(patient)
+    return patient
 # ─────────────────────────────────────────────
 # HEALTH
 # ─────────────────────────────────────────────
+
 
 @app.get("/health")
 def health():
