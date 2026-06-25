@@ -129,7 +129,25 @@ class PatientUpdate(BaseModel):
     age: int | None = None
     gender: str | None = None
     contact: str | None = None
+    
+class AdminPasswordReset(BaseModel):
+    email: str
+    new_password: str
+    admin_key: str
 
+
+@app.post("/admin/reset-password")
+def admin_reset_password(req: AdminPasswordReset, db: Session = Depends(database.get_db)):
+    if req.admin_key != os.environ.get("ADMIN_SECRET_KEY"):
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    user = db.query(models.User).filter(models.User.email == req.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.hashed_password = auth.get_password_hash(req.new_password)
+    db.commit()
+    return {"message": f"Password reset for {req.email}"}
 
 @app.patch("/patients/{patient_id}", response_model=PatientResponse)
 def update_patient(
