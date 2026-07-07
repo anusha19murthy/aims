@@ -10,7 +10,17 @@ import os
 import database
 import models
 import auth
+import httpx
 
+def append_to_sheet(data: dict):
+    try:
+        sheet_url = os.environ.get("GOOGLE_SHEET_WEBHOOK_URL")
+        if not sheet_url:
+            return
+        httpx.post(sheet_url, json=data, timeout=10)
+    except Exception as e:
+        print(f"Sheet append failed: {e}")
+        
 from ml.processor import clean_text
 from ml.opd.extractor import extract_opd
 from ml.surgery.extractor import extract_surgery
@@ -80,6 +90,10 @@ class UserCreate(BaseModel):
     email: str
     password: str
     full_name: str
+    phone: str | None = None
+    hospital: str | None = None
+    ward: str | None = None
+    city: str | None = None
 
 
 class UserResponse(BaseModel):
@@ -244,6 +258,18 @@ def register_user(user: UserCreate, db: Session = Depends(database.get_db)):
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # ── Add to Google Sheet ──
+    from datetime import datetime, timezone
+    append_to_sheet({
+        "name": user.full_name,
+        "phone": user.phone or "",
+        "hospital": user.hospital or "",
+        "ward": user.ward or "",
+        "city": user.city or "",
+        "email": user.email,
+        "registered_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    })
 
     return new_user
 
