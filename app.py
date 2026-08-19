@@ -60,6 +60,16 @@ except Exception:
 
 models.Base.metadata.create_all(bind=database.engine)
 
+# Add appointment_date column if it doesn't exist yet
+from sqlalchemy import text
+with database.engine.connect() as conn:
+    try:
+        conn.execute(text("ALTER TABLE patients ADD COLUMN appointment_date VARCHAR"))
+        conn.commit()
+        print("Added appointment_date column")
+    except Exception:
+        pass  # Column already exists, ignore
+
 # ─────────────────────────────────────────────
 # REQUEST MODELS
 # ─────────────────────────────────────────────
@@ -107,7 +117,8 @@ class PatientCreate(BaseModel):
     age: int | None = None
     gender: str | None = None
     contact: str | None = None
-
+    appointment_date: str| None = None
+    
 class NoteCreate(BaseModel):
     note_type: str
     content: str  # JSON-encoded string of the note's fields
@@ -143,6 +154,7 @@ class PatientUpdate(BaseModel):
     age: int | None = None
     gender: str | None = None
     contact: str | None = None
+    appointment_date: str| None = None
     
 class AdminPasswordReset(BaseModel):
     email: str
@@ -333,6 +345,7 @@ def create_patient(
         gender=patient.gender,
         contact=patient.contact,
         doctor_id=current_user.id
+        appointment_date = patient.appointment_date
     )
     db.add(new_patient)
     db.commit()

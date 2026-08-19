@@ -29,6 +29,7 @@ class Patient(Base):
     contact = Column(String, nullable=True)
     doctor_id = Column(String, ForeignKey("users.id"))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    appointment_date = Column(String, nullable = True)
 
     doctor = relationship("User", back_populates="patients")
     notes = relationship("Note", back_populates="patient", cascade="all, delete-orphan")
