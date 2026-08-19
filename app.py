@@ -1,7 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from sqlalchemy import func, text
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -12,6 +13,7 @@ import models
 import auth
 import httpx
 
+
 def append_to_sheet(data: dict):
     try:
         sheet_url = os.environ.get("GOOGLE_SHEET_WEBHOOK_URL")
@@ -20,7 +22,8 @@ def append_to_sheet(data: dict):
         httpx.post(sheet_url, json=data, timeout=10)
     except Exception as e:
         print(f"Sheet append failed: {e}")
-        
+
+
 from ml.processor import clean_text
 from ml.opd.extractor import extract_opd
 from ml.surgery.extractor import extract_surgery
@@ -61,7 +64,6 @@ except Exception:
 models.Base.metadata.create_all(bind=database.engine)
 
 # Add appointment_date column if it doesn't exist yet
-from sqlalchemy import text
 with database.engine.connect() as conn:
     try:
         conn.execute(text("ALTER TABLE patients ADD COLUMN appointment_date VARCHAR"))
@@ -117,8 +119,9 @@ class PatientCreate(BaseModel):
     age: int | None = None
     gender: str | None = None
     contact: str | None = None
-    appointment_date: str| None = None
-    
+    appointment_date: str | None = None
+
+
 class NoteCreate(BaseModel):
     note_type: str
     content: str  # JSON-encoded string of the note's fields
@@ -130,6 +133,7 @@ class PatientResponse(BaseModel):
     age: int | None = None
     gender: str | None = None
     contact: str | None = None
+    appointment_date: str | None = None
 
     class Config:
         from_attributes = True
@@ -144,23 +148,32 @@ class NoteResponse(BaseModel):
 
     class Config:
         from_attributes = True
-        
-# ─────────────────────────────────────────────
-# PATIENT EDIT DETAILS
-# ─────────────────────────────────────────────
+
 
 class PatientUpdate(BaseModel):
     name: str | None = None
     age: int | None = None
     gender: str | None = None
     contact: str | None = None
-    appointment_date: str| None = None
-    
+    appointment_date: str | None = None
+
+
 class AdminPasswordReset(BaseModel):
     email: str
     new_password: str
     admin_key: str
 
+# ─────────────────────────────────────────────
+# HEALTH
+# ─────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+# ─────────────────────────────────────────────
+# ADMIN
+# ─────────────────────────────────────────────
 
 @app.post("/admin/reset-password")
 def admin_reset_password(req: AdminPasswordReset, db: Session = Depends(database.get_db)):
@@ -174,41 +187,6 @@ def admin_reset_password(req: AdminPasswordReset, db: Session = Depends(database
     user.hashed_password = auth.get_password_hash(req.new_password)
     db.commit()
     return {"message": f"Password reset for {req.email}"}
-
-@app.patch("/patients/{patient_id}", response_model=PatientResponse)
-def update_patient(
-    patient_id: str,
-    update: PatientUpdate,
-    current_user: models.User = Depends(auth.get_current_user),
-    db: Session = Depends(database.get_db)
-):
-    patient = db.query(models.Patient).filter(
-        models.Patient.id == patient_id,
-        models.Patient.doctor_id == current_user.id
-    ).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    if update.name is not None:
-        patient.name = update.name
-    if update.age is not None:
-        patient.age = update.age
-    if update.gender is not None:
-        patient.gender = update.gender
-    if update.contact is not None:
-        patient.contact = update.contact
-
-    db.commit()
-    db.refresh(patient)
-    return patient
-# ─────────────────────────────────────────────
-# HEALTH
-# ─────────────────────────────────────────────
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
 
 # ─────────────────────────────────────────────
 # EXTRACTOR ROUTES
@@ -271,8 +249,6 @@ def register_user(user: UserCreate, db: Session = Depends(database.get_db)):
     db.commit()
     db.refresh(new_user)
 
-    # ── Add to Google Sheet ──
-    from datetime import datetime, timezone
     append_to_sheet({
         "name": user.full_name,
         "phone": user.phone or "",
@@ -319,9 +295,82 @@ async def login(request: Request, db: Session = Depends(database.get_db)):
         }
     }
 
+
+@app.get("/users/me", response_model=UserResponse)
+def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
+    return current_user
+
+
+@app.post("/auth/google")
+async def google_login(req: GoogleLoginRequest, db: Session = Depends(database.get_db)):
+    idinfo = auth.verify_google_token(req.token)
+
+    if not idinfo:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+    email = idinfo.get("email")
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+
+    if not user:
+        user = models.User(
+            email=email,
+            hashed_password=auth.get_password_hash(models.gen_uuid()),
+            full_name=idinfo.get("name", "")
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    access_token = auth.create_access_token(
+        data={"sub": user.id},
+        expires_delta=timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name
+        }
+    }
+
 # ─────────────────────────────────────────────
 # PATIENTS (scoped to logged-in doctor)
+# NOTE: specific paths declared BEFORE /patients/{patient_id}
 # ─────────────────────────────────────────────
+
+@app.get("/patients/date-counts")
+def get_patient_date_counts(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    rows = (
+        db.query(models.Patient.appointment_date, func.count(models.Patient.id))
+        .filter(
+            models.Patient.doctor_id == current_user.id,
+            models.Patient.appointment_date.isnot(None),
+            models.Patient.appointment_date != "",
+        )
+        .group_by(models.Patient.appointment_date)
+        .all()
+    )
+    return {date_str: count for date_str, count in rows}
+
+
+@app.get("/patients/by-date/{date}", response_model=list[PatientResponse])
+def get_patients_by_date(
+    date: str,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    return db.query(models.Patient).filter(
+        models.Patient.doctor_id == current_user.id,
+        models.Patient.appointment_date == date
+    ).all()
+
 
 @app.get("/patients", response_model=list[PatientResponse])
 def get_patients(
@@ -344,13 +393,43 @@ def create_patient(
         age=patient.age,
         gender=patient.gender,
         contact=patient.contact,
-        doctor_id=current_user.id
-        appointment_date = patient.appointment_date
+        doctor_id=current_user.id,
+        appointment_date=patient.appointment_date,
     )
     db.add(new_patient)
     db.commit()
     db.refresh(new_patient)
     return new_patient
+
+
+@app.patch("/patients/{patient_id}", response_model=PatientResponse)
+def update_patient(
+    patient_id: str,
+    update: PatientUpdate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(database.get_db)
+):
+    patient = db.query(models.Patient).filter(
+        models.Patient.id == patient_id,
+        models.Patient.doctor_id == current_user.id
+    ).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if update.name is not None:
+        patient.name = update.name
+    if update.age is not None:
+        patient.age = update.age
+    if update.gender is not None:
+        patient.gender = update.gender
+    if update.contact is not None:
+        patient.contact = update.contact
+    if update.appointment_date is not None:
+        patient.appointment_date = update.appointment_date
+
+    db.commit()
+    db.refresh(patient)
+    return patient
 
 
 @app.delete("/patients/{patient_id}")
@@ -368,7 +447,6 @@ def delete_patient(
     db.delete(patient)
     db.commit()
     return {"ok": True}
-
 
 # ─────────────────────────────────────────────
 # NOTES (scoped to logged-in doctor, per patient)
@@ -417,47 +495,6 @@ def create_patient_note(
     db.commit()
     db.refresh(new_note)
     return new_note
-
-@app.get("/users/me", response_model=UserResponse)
-def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
-    return current_user
-
-
-@app.post("/auth/google")
-async def google_login(req: GoogleLoginRequest, db: Session = Depends(database.get_db)):
-    idinfo = auth.verify_google_token(req.token)
-
-    if not idinfo:
-        raise HTTPException(status_code=401, detail="Invalid Google token")
-
-    email = idinfo.get("email")
-
-    user = db.query(models.User).filter(models.User.email == email).first()
-
-    if not user:
-        user = models.User(
-            email=email,
-            hashed_password=auth.get_password_hash(models.gen_uuid()),
-            full_name=idinfo.get("name", "")
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-
-    access_token = auth.create_access_token(
-        data={"sub": user.id},
-        expires_delta=timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "full_name": user.full_name
-        }
-    }
 
 # ─────────────────────────────────────────────
 # TRANSCRIBE
