@@ -1,19 +1,21 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+"""MongoDB connection helpers. Set MONGODB_URI in the deployment environment."""
+import os
+from pymongo import MongoClient, ASCENDING
+from pymongo.database import Database
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./cogniscribe.db"
-# SQLALCHEMY_DATABASE_URL = "postgresql://user:password@postgresserver/db" # For PostgreSQL later
+_client: MongoClient | None = None
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False} # check_same_thread=False is needed for SQLite
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def get_database() -> Database:
+    global _client
+    uri = os.environ.get("MONGODB_URI")
+    if not uri:
+        raise RuntimeError("MONGODB_URI is not configured")
+    if _client is None:
+        _client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+    return _client.get_default_database(default="cogniscribe")
 
-Base = declarative_base()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def ensure_indexes() -> None:
+    db = get_database()
+    db.users.create_index([("email", ASCENDING)], unique=True)
+    db.patients.create_index([("doctor_id", ASCENDING), ("appointment_date", ASCENDING)])
+    db.notes.create_index([("patient_id", ASCENDING), ("created_at", ASCENDING)])
