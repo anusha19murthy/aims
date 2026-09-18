@@ -46,7 +46,12 @@ app.add_middleware(
         "https://app.cogniscribe.in",
         "https://cogniscribe-web.vercel.app",
         "http://localhost:3000",
+        "http://localhost:8081",
+        "http://localhost:8082",
+        "http://127.0.0.1:8081",
+        "http://127.0.0.1:8082",
     ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -275,9 +280,16 @@ async def login(request: Request, db: Session = Depends(database.get_db)):
         email = form_data.get("username")
         password = form_data.get("password")
 
+    email = email.strip().lower() if isinstance(email, str) else ""
+    password = password if isinstance(password, str) else ""
     user = db.query(models.User).filter(models.User.email == email).first()
 
-    if not user or not auth.verify_password(password, user.hashed_password):
+    try:
+        valid_password = bool(user and auth.verify_password(password, user.hashed_password))
+    except (ValueError, TypeError):
+        valid_password = False
+
+    if not valid_password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = auth.create_access_token(
